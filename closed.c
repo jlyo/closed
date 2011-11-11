@@ -8,7 +8,26 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-#define FREEADDRINFO(r) do { freeaddrinfo(r); (r) = NULL; } while(0)
+#define FREEADDRINFO(r) do { \
+        freeaddrinfo(r); \
+        r = NULL; \
+    } while(0)
+#define LOG_ERRNO(fmt, ...) do { \
+        fprintf(stderr, fmt ": %s\n", ##__VA_ARGS__, strerror(errno)); \
+    } while(0)
+#define LOG_GAIERR(err, fmt, ...) do { \
+        fprintf(stderr, fmt ": %s\n", ##__VA_ARGS__, gai_strerror(err)); \
+    } while(0)
+
+#define XLOG_GAIERR(err, ...) do { \
+        LOG_GAIERR(err, ##__VA_ARGS__); \
+        return -err; \
+    while(0)
+
+#define XLOG_ERRNO(...) do { \
+        LOG_ERRNO(##__VA_ARGS__); \
+        return -errno; \
+    while(0)
 
 static const struct addrinfo HINTS = {
     .ai_family = AF_UNSPEC,
@@ -44,7 +63,7 @@ int main (const int argc, const char *const argv[]) {
     const char *const port = argc > 2 ? argv[2] : DEFAULT_PORT;
 
     if ((rv = getaddrinfo(host, port, NULL, &res)) != 0) {
-        fprintf(stderr, "getaddrinfo() failed: %s\n", gai_strerror(rv));
+        LOG_GAIERR(rv, "getaddrinfo() failed");
         goto main_err0;
     }
 
@@ -62,31 +81,31 @@ int main (const int argc, const char *const argv[]) {
             }
         } else {
             if (rv == EAI_SYSTEM) {
-                fprintf(stderr, "getnameinfo() failed: system error: %s\n", strerror(errno));
+                LOG_ERRNO("getnameinfo() failed");
             } else {
-                fprintf(stderr, "getnameinfo() failed: %s\n", gai_strerror(rv));
+                LOG_GAIERR(rv, "getnameinfo() failed");
             }
             goto main_err1;
         }
 
         if ((srv_fd = socket(res_p->ai_family, res_p->ai_socktype, res_p->ai_protocol)) < 0) {
-            fprintf(stderr, "socket() failed: %s\n", strerror(errno));
+            LOG_ERRNO("socket() failed");
         } else if (setsockopt(srv_fd, SOL_SOCKET, SO_REUSEADDR, &YES, sizeof(YES)) == -1) {
-            fprintf(stderr, "setsockopt() failed: %s\n", strerror(errno));
+            LOG_ERRNO("setsockopt() failed");
             if (close(srv_fd) == -1) {
-                fprintf(stderr, "close() failed: %s\n", strerror(errno));
+                LOG_ERRNO("close() failed");
                 goto main_err1;
             }
         } else if (bind(srv_fd, res_p->ai_addr, res_p->ai_addrlen) == -1) {
-            fprintf(stderr, "bind() failed: %s\n", strerror(errno));
+            LOG_ERRNO("bind() failed");
             if (close(srv_fd) == -1) {
-                fprintf(stderr, "close() failed: %s\n", strerror(errno));
+                LOG_ERRNO("close() failed");
                 goto main_err1;
             }
         } else if (listen(srv_fd, BACKLOG) == -1) {
-            fprintf(stderr, "listen() failed: %s\n", strerror(errno));
+            LOG_ERRNO("listen() failed");
             if (close(srv_fd) == -1) {
-                fprintf(stderr, "close() failed: %s\n", strerror(errno));
+                LOG_ERRNO("close() failed");
                 goto main_err1;
             }
         } else {
@@ -102,14 +121,14 @@ int main (const int argc, const char *const argv[]) {
         FD_ZERO(&srv_fd_set);
         FD_SET(srv_fd, &srv_fd_set);
         if ((rv = select(srv_fd+1, &srv_fd_set, NULL, NULL, NULL)) == -1) {
-            fprintf(stderr, "select() failed: %s\n", strerror(errno)); 
+            LOG_ERRNO("select() failed");
             goto main_err2;
         } else if (rv > 0) {
             if (FD_ISSET(srv_fd, &srv_fd_set)) {
                 remote_addr_len = sizeof(remote_addr_storage);
                 const int fd = accept(srv_fd, remote_addr, &remote_addr_len);
                 if (fd == -1) {
-                    fprintf(stderr, "accept() failed: %s\n", strerror(errno)); 
+                    LOG_ERRNO("accept() failed");
                     goto main_err2;
                 }
 
@@ -125,18 +144,18 @@ int main (const int argc, const char *const argv[]) {
                     }
                 } else {
                     if (rv == EAI_SYSTEM) {
-                        fprintf(stderr, "getnameinfo() failed: system error: %s\n", strerror(errno));
+                        LOG_ERRNO("getnameinfo() failed: system error");
                     } else {
-                        fprintf(stderr, "getnameinfo() failed: %s\n", gai_strerror(rv));
+                        LOG_GAIERR(rv, "getnameinfo() failed");
                     }
                     if (close(fd) == -1) {
-                        fprintf(stderr, "close() failed: %s\n", strerror(errno));
+                        LOG_ERRNO("close() failed");
                     }
                     goto main_err2;
                 }
 
                 if (close(fd) == -1) {
-                    fprintf(stderr, "close() failed: %s\n", strerror(errno));
+                    LOG_ERRNO("close() failed");
                     goto main_err2;
                 }
                 fprintf(stderr, " closed\n");
@@ -150,7 +169,7 @@ int main (const int argc, const char *const argv[]) {
 
 main_err2:
     if (close(srv_fd) == -1) {
-        fprintf(stderr, "close() failed: %s\n", strerror(errno));
+        LOG_ERRNO("close() failed");
     }
 main_err1:
     FREEADDRINFO(res);
